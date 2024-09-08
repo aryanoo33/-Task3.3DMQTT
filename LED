@@ -1,0 +1,119 @@
+#include <WiFiNINA.h>     // This library helps the Arduino connect to WiFi
+#include <PubSubClient.h> // This library is for sending and receiving messages using MQTT
+
+// WiFi and MQTT settings
+const char* ssid = "Gopesh";           // Your WiFi network name (SSID)
+const char* password = "00000000";     // Your WiFi password
+const char* mqtt_server = "broker.emqx.io";  // The server we're using to send messages (MQTT broker)
+const int mqtt_port = 1883;            // The port number for the MQTT server (1883 is the default for non-secure)
+const char* mqtt_topic_wave = "SIT210/wave";  // Topic to publish wave messages
+const char* mqtt_topic_pat = "SIT210/pat";    // Topic to publish pat messages
+
+// Ultrasonic sensor pins
+const int trigPin = 9;  // Pin on the Arduino that sends the signal (trigger pin)
+const int echoPin = 10; // Pin that listens for the echo (echo pin)
+const int ledPin = 13;  // LED pin for visual feedback
+long duration;          // Variable to store the time it takes for the signal to return
+int distance;           // Variable to store the calculated distance
+
+WiFiClient espClient;       // Create a WiFi client
+PubSubClient client(espClient);  // Create an MQTT client
+
+// Function to connect to WiFi
+void setup_wifi() {
+  delay(10);                     // A short pause before starting
+  Serial.println("Connecting to WiFi...");  // Let us know we're trying to connect
+  WiFi.begin(ssid, password);    // Try to connect to the WiFi network
+  while (WiFi.status() != WL_CONNECTED) {  // Keep trying until we're connected
+    delay(500);                  // Wait half a second between attempts
+    Serial.print(".");            // Print a dot to show it's still trying
+  }
+  Serial.println("\nWiFi connected!"); // Once we're connected, let us know
+}
+
+// Function to connect to the MQTT broker
+void reconnect() {
+  while (!client.connected()) {   // Keep trying until the connection is made
+    Serial.print("Attempting MQTT connection...");  // Let us know it's trying
+    if (client.connect("ArduinoPublisher")) {  // Try connecting as "ArduinoPublisher"
+      Serial.println("connected");  // If successful, print that we're connected
+    } else {  // If it fails, print the error code and wait 5 seconds before trying again
+      Serial.print("failed, rc=");
+      Serial.print(client.state());  // Print the connection error
+      delay(5000);  // Wait 5 seconds before retrying
+    }
+  }
+}
+
+// Function to flash the LED in a specific pattern for a wave
+void flash_led_wave() {
+  for (int i = 0; i < 2; i++) {  // Blink twice
+    digitalWrite(ledPin, HIGH);   // Turn the LED on
+    delay(500);                   // Wait for half a second
+    digitalWrite(ledPin, LOW);    // Turn the LED off
+    delay(500);                   // Wait for half a second
+  }
+}
+
+// Function to flash the LED in a specific pattern for a pat
+void flash_led_pat() {
+  digitalWrite(ledPin, HIGH);   // Turn the LED on
+  delay(1000);                  // Wait for 1 second (long blink)
+  digitalWrite(ledPin, LOW);    // Turn the LED off
+}
+
+// Ultrasonic wave and pat detection function
+void detect_gesture() {
+  // Send a pulse from the trigger pin to start the ultrasonic measurement
+  digitalWrite(trigPin, LOW);          // Ensure the trigger pin is low
+  delayMicroseconds(2);                // Wait for 2 microseconds
+  digitalWrite(trigPin, HIGH);         // Send a high signal for 10 microseconds to trigger the pulse
+  delayMicroseconds(10);               // Wait for 10 microseconds
+  digitalWrite(trigPin, LOW);          // Set the trigger pin low again
+  
+  // Read the echo pin to measure the time it takes for the pulse to return
+  duration = pulseIn(echoPin, HIGH);   // Measure the time the echo pin stays high (time for the pulse to return)
+
+  // Convert the time to distance (in cm)
+  distance = duration * 0.034 / 2;     // Formula to calculate distance: time * speed of sound / 2
+
+  // Print the distance for debugging purposes
+  Serial.print("Distance: ");          
+  Serial.print(distance);              // Print the measured distance
+  Serial.println(" cm");
+
+  // Detect wave (object within 0-20 cm)
+  if (distance > 0 && distance < 20) {
+    client.publish(mqtt_topic_wave, "Wave detected by Publisher");  // Send wave message
+    Serial.println("Wave detected, message published!");  // Let us know the message was sent
+    flash_led_wave();  // Flash the LED for a wave
+    delay(3000);  // Wait 3 seconds before taking another measurement
+
+  // Detect pat (object between 20-50 cm)
+  } else if (distance >= 20 && distance < 50) {
+    client.publish(mqtt_topic_pat, "Pat detected by Publisher");  // Send pat message
+    Serial.println("Pat detected, message published!");  // Let us know the message was sent
+    flash_led_pat();  // Flash the LED for a pat
+    delay(3000);  // Wait 3 seconds before taking another measurement
+
+  } else {
+    Serial.println("No gesture detected.");  // If nothing is detected, let us know
+  }
+}
+
+void setup() {
+  Serial.begin(9600);   // Start the serial connection at 9600 baud (for debugging)
+  pinMode(trigPin, OUTPUT);  // Set the trigger pin as an output
+  pinMode(echoPin, INPUT);   // Set the echo pin as an input
+  pinMode(ledPin, OUTPUT);   // Set the LED pin as an output
+  setup_wifi();  // Connect to the WiFi network
+  client.setServer(mqtt_server, mqtt_port);  // Set up the MQTT server details
+}
+
+void loop() {
+  if (!client.connected()) {  // If the MQTT client isn't connected
+    reconnect();              // Try to reconnect
+  }
+  client.loop();  // Keep the connection alive and handle incoming/outgoing messages
+  detect_gesture();  // Call the function to detect gestures and send messages
+}
